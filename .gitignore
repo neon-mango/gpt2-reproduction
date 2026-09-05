@@ -1,0 +1,12 @@
+# локальные данные и артефакты
+data/
+checkpoints/
+*.log
+venv/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# локальная ссылка на предыдущую попытку (вне репо)
+prev-llm-attempt

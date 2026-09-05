@@ -1,0 +1,12 @@
+# PyTorch: для CPU достаточно `pip install torch`.
+# Когда будет подключена RTX 3080, поставить CUDA-сборку:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128
+torch
+numpy
+regex
+tqdm
+requests
+datasets
+safetensors
+# только для verify_parity.py (сверка с эталоном HF, в обучении не участвует)
+transformers
