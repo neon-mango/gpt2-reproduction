@@ -1,6 +1,9 @@
 # локальные данные и артефакты
 data/
 checkpoints/
+*.pt
+*.bin
+*.safetensors
 *.log
 venv/
 .venv/
