@@ -52,10 +52,16 @@ def iter_docs(raw_paths: list[Path]):
 
 
 def count_docs(raw_paths: list[Path]) -> int:
+    from tqdm import tqdm
+
     n = 0
+    bar = tqdm(desc="сканирование корпуса", unit="doc", dynamic_ncols=True)
     for path in raw_paths:
         with gzip.open(path, "rt", encoding="utf-8") as f:
-            n += sum(1 for _ in f)
+            for line in f:
+                n += 1
+                bar.update(1)
+    bar.close()
     return n
 
 
@@ -114,32 +120,48 @@ def main() -> None:
         def task_iter():
             """Порождает задачи (is_val, chunk) с корректным сплитом train/val."""
             nonlocal seen
+            from tqdm import tqdm
+
+            # фаза пропуска может занять минуты на возобновлении — показываем
+            skip_bar = (tqdm(total=skip_docs, desc="пропуск закодированного",
+                             unit="doc", dynamic_ncols=True, position=0)
+                        if skip_docs else None)
             batch: list[str] = []
             batch_is_val = False
-            for text in iter_docs(raw_paths):
-                if seen < skip_docs:
+            try:
+                for text in iter_docs(raw_paths):
+                    if seen < skip_docs:
+                        seen += 1
+                        if skip_bar is not None:
+                            skip_bar.update(1)
+                        continue
+                    if skip_bar is not None:
+                        skip_bar.close()
+                        skip_bar = None
+                    is_val = seen >= train_docs
                     seen += 1
-                    continue
-                is_val = seen >= train_docs
-                seen += 1
-                if batch and is_val != batch_is_val:
-                    # граница train/val внутри батча — отдаём батч как есть
+                    if batch and is_val != batch_is_val:
+                        # граница train/val внутри батча — отдаём батч как есть
+                        yield batch_is_val, batch
+                        batch = []
+                    batch_is_val = is_val
+                    batch.append(text)
+                    if len(batch) >= CHUNK_DOCS:
+                        yield batch_is_val, batch
+                        batch = []
+                if batch:
                     yield batch_is_val, batch
-                    batch = []
-                batch_is_val = is_val
-                batch.append(text)
-                if len(batch) >= CHUNK_DOCS:
-                    yield batch_is_val, batch
-                    batch = []
-            if batch:
-                yield batch_is_val, batch
+            finally:
+                if skip_bar is not None:
+                    skip_bar.close()
 
         with mp.get_context("spawn").Pool(
             args.workers, initializer=_worker_init, initargs=(str(args.tokenizer_dir),)
         ) as pool:
             from tqdm import tqdm
 
-            bar = tqdm(total=total_docs - skip_docs, desc="tokenize", unit="doc")
+            bar = tqdm(total=total_docs - skip_docs, desc="tokenize", unit="doc",
+                       dynamic_ncols=True, position=1)
             with open(train_path, "ab") as ftrain, open(val_path, "ab") as fval:
                 # imap сохраняет порядок задач и распараллеливает кодирование
                 for is_val, n_docs, payload in pool.imap(_encode_chunk, task_iter(), chunksize=1):

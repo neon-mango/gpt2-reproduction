@@ -15,7 +15,9 @@ openwebtext (https://huggingface.co/datasets/openwebtext): ~8M документ�
 import argparse
 import gzip
 import json
+import os
 import sys
+import zlib
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -45,21 +47,24 @@ def main() -> None:
     total = 0
     while (args.out_dir / f"docs-{shard_idx:05d}.jsonl.gz").exists():
         shard_idx += 1
-    if shard_idx > 0:
-        # пересчитываем, сколько документов уже скачано; хвостовой шард мог быть
-        # оборван (убитый процесс в середине записи) — тогда удаляем и перекачиваем
+    # пересчитываем, сколько документов уже скачано; хвостовой шард мог быть
+    # повреждён (обрыв в середине записи: EOFError/zlib.error/OSError) —
+    # чиним циклом, битых хвостов может быть несколько
+    in_last = 0
+    while shard_idx > 0:
         last = args.out_dir / f"docs-{shard_idx - 1:05d}.jsonl.gz"
         try:
             with gzip.open(last, "rt", encoding="utf-8") as f:
                 in_last = sum(1 for _ in f)
-        except (EOFError, OSError):
-            print(f"{last.name} оборван — удаляю, шард будет перекачан")
+            break
+        except (EOFError, OSError, zlib.error, ValueError):
+            print(f"{last.name} повреждён — удаляю, шард будет перекачан")
             last.unlink()
             shard_idx -= 1
             in_last = 0
-        total = shard_idx * args.shard_size + in_last
-        if total:
-            print(f"Найден готовый прогресс: {total} документов, продолжаю с шарда {shard_idx}")
+    total = shard_idx * args.shard_size + in_last
+    if total:
+        print(f"Найден готовый прогресс: {total} документов, продолжаю с шарда {shard_idx}")
 
     if limit is not None and total >= limit:
         print(f"Лимит {limit} документов уже скачан")
@@ -70,8 +75,11 @@ def main() -> None:
     if total:
         ds = ds.skip(total)
 
-    out_path = args.out_dir / f"docs-{shard_idx:05d}.jsonl.gz"
-    fout = gzip.open(out_path, "wt", encoding="utf-8")
+    # шард пишется в .tmp и атомарно переименовывается при закрытии: обрыв
+    # в середине записи не оставит битого файла под финальным именем
+    final_path = args.out_dir / f"docs-{shard_idx:05d}.jsonl.gz"
+    tmp_path = final_path.with_name(final_path.name + ".tmp")
+    fout = gzip.open(tmp_path, "wt", encoding="utf-8")
     n_in_shard = 0
     pbar = tqdm(initial=total, desc="openwebtext", unit="doc")
     try:
@@ -85,14 +93,21 @@ def main() -> None:
             pbar.update(1)
             if n_in_shard >= args.shard_size:
                 fout.close()
+                os.replace(tmp_path, final_path)
                 shard_idx += 1
-                out_path = args.out_dir / f"docs-{shard_idx:05d}.jsonl.gz"
-                fout = gzip.open(out_path, "wt", encoding="utf-8")
+                final_path = args.out_dir / f"docs-{shard_idx:05d}.jsonl.gz"
+                tmp_path = final_path.with_name(final_path.name + ".tmp")
+                fout = gzip.open(tmp_path, "wt", encoding="utf-8")
                 n_in_shard = 0
             if limit is not None and total >= limit:
                 break
     finally:
         fout.close()
+        if n_in_shard > 0:
+            # частичный хвостовой шард — валидный gzip, resume досчитает строки
+            os.replace(tmp_path, final_path)
+        else:
+            tmp_path.unlink(missing_ok=True)
         pbar.close()
 
     print(f"Скачано {total} документов -> {args.out_dir}")
