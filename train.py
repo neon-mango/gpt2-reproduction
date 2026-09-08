@@ -26,8 +26,12 @@ import time
 from contextlib import nullcontext
 from pathlib import Path
 
+# до первого импорта torch: меньше фрагментации VRAM при кусочном CE
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 import numpy as np
 import torch
+from tqdm import tqdm
 
 REPO = Path(__file__).resolve().parent
 sys.path.insert(0, str(REPO))
@@ -49,9 +53,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--train-file", type=Path, default=None)
     p.add_argument("--val-file", type=Path, default=None)
     # оптимизация
-    p.add_argument("--batch-size", type=int, default=8, help="последовательностей на микро-шаг")
-    p.add_argument("--grad-accum", type=int, default=64,
-                   help="микро-шагов на один шаг оптимизатора; "
+    p.add_argument("--batch-size", type=int, default=4,
+                   help="последовательностей на микро-шаг (4 — для 10GB VRAM)")
+    p.add_argument("--grad-accum", type=int, default=128,
+                   help="микро-шагов на шаг оптимизатора; "
                         "batch*accum*seq_len = токенов на шаг (в статье 512*1024)")
     p.add_argument("--max-iters", type=int, default=20_000)
     p.add_argument("--max-tokens", type=float, default=None,
@@ -70,6 +75,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--eval-iters", type=int, default=20, help="батчей на одну оценку val")
     p.add_argument("--log-interval", type=int, default=10)
     p.add_argument("--no-resume", action="store_true", help="не продолжать с last.pt")
+    p.add_argument("--no-bar", action="store_true",
+                   help="без прогресс-баров tqdm (иначе они и так отключаются "
+                        "автоматически, если вывод не в терминал)")
     p.add_argument("--seed", type=int, default=1337)
     return p.parse_args()
 
@@ -207,16 +215,39 @@ def main() -> None:
             optimizer.load_state_dict(ckpt["optimizer"])
         step = ckpt.get("step", 0)
         best_val = ckpt.get("best_val", float("inf"))
-        if "rng" in ckpt:
-            torch.set_rng_state(ckpt["rng"].get("torch", torch.get_rng_state()))
-            if is_cuda:
-                torch.cuda.set_rng_state_all(ckpt["rng"].get("cuda"))
+        rng = ckpt.get("rng") or {}
+        # rng-состояния должны быть CPU ByteTensor, а чекпоинт загружен с
+        # map_location=cuda — возвращаем на CPU перед set_rng_state
+        rng_t = rng.get("torch")
+        if rng_t is not None:
+            torch.set_rng_state(rng_t.cpu().to(torch.uint8).contiguous())
+        rng_c = rng.get("cuda")
+        if is_cuda and rng_c is not None:
+            torch.cuda.set_rng_state_all([s.cpu() for s in rng_c])
         print(f"[resume] шаг {step}, best_val {best_val:.4f}")
+
+    # --- прогресс-бары: как в предыдущей попытке (train + valid, с postfix) ---
+    bars_active = (not args.no_bar) and sys.stderr.isatty()
+    train_bar = val_bar = None
+    if bars_active:
+        # shutil.get_terminal_size, а не внутренний запрос tqdm: при нулевом
+        # размере окна (некоторые pty/IDE) tqdm 4.70 молча рисует пустой бар
+        import shutil
+        ncols = shutil.get_terminal_size().columns or None
+        train_bar = tqdm(total=float(max_iters), initial=float(step),
+                         desc=f"train {n_params/1e6:.0f}M", position=0,
+                         leave=False, ncols=ncols, unit="step")
+        val_bar = tqdm(total=float(args.eval_iters), desc="valid", position=1,
+                       leave=False, ncols=ncols, unit="batch")
 
     def log(msg: str) -> None:
         stamp = time.strftime("%H:%M:%S")
-        print(f"[{stamp}] {msg}", flush=True)
-        log_file.write(f"[{stamp}] {msg}\n")
+        line = f"[{stamp}] {msg}"
+        if bars_active:
+            tqdm.write(line)  # не ломает отрисовку баров
+        else:
+            print(line, flush=True)
+        log_file.write(line + "\n")
         log_file.flush()
 
     # --- оценка ---
@@ -226,11 +257,16 @@ def main() -> None:
     def evaluate() -> float:
         model.eval()
         losses = torch.zeros(args.eval_iters)
+        if val_bar is not None:
+            val_bar.reset()
         for k in range(args.eval_iters):
             x, y = get_batch(val_data, args.batch_size, args.n_positions, device, val_gen)
             with amp_ctx:
                 _, loss = model(x, y)
             losses[k] = loss.detach().float()
+            if val_bar is not None:
+                val_bar.update(1)
+                val_bar.set_postfix(loss=f"{losses[:k + 1].mean().item():.4f}")
         model.train()
         return losses.mean().item()
 
@@ -240,6 +276,7 @@ def main() -> None:
     flops_per_token = 6 * raw_model.num_params(non_embedding=True) + \
         12 * config.n_layer * config.n_embd * config.n_positions
     t0 = time.time()
+    cur_lr = args.lr
     log(f"старт: max_iters={max_iters}, lr={args.lr}, warmup={args.warmup_steps}")
 
     while step < max_iters:
@@ -276,22 +313,39 @@ def main() -> None:
 
         # --- шаг с градиентным накоплением ---
         optimizer.zero_grad(set_to_none=True)
-        loss_acc = 0.0
+        loss_acc = torch.zeros((), device=device)   # среднее по шагу (для лога)
+        loss_sum = torch.zeros((), device=device)   # честная сумма loss микро-шагов (для бара)
+        last_post = time.time()
+        tokens_since = 0
         for micro in range(args.grad_accum):
             x, y = get_batch(train_data, args.batch_size, args.n_positions, device, batch_gen)
             with amp_ctx:
                 _, loss = model(x, y)
+                loss_sum += loss.detach()
                 loss = loss / args.grad_accum
             scaler.scale(loss).backward()
             loss_acc += loss.detach()
+            tokens_since += args.batch_size * args.n_positions
+            if train_bar is not None:
+                # точная позиция с учётом накопления float-дробей
+                target = step + (micro + 1) / args.grad_accum
+                train_bar.update(target - train_bar.n)
+                now = time.time()
+                if now - last_post >= 2.0 or micro == args.grad_accum - 1:
+                    tps = tokens_since / max(now - last_post, 1e-6)
+                    train_bar.set_postfix(loss=f"{(loss_sum / (micro + 1)).item():.4f}",
+                                          lr=f"{cur_lr:.2e}", tok_s=f"{tps/1e3:.0f}K")
+                    tokens_since = 0
+                    last_post = now
         scaler.unscale_(optimizer)
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
         scaler.step(optimizer)
         scaler.update()
         step += 1
-        lr = args.lr * get_lr_frac(step, args.warmup_steps, max_iters, args.min_lr_ratio)
+        cur_lr = args.lr * get_lr_frac(step, args.warmup_steps, max_iters, args.min_lr_ratio)
         for group in optimizer.param_groups:
-            group["lr"] = lr
+            group["lr"] = cur_lr
+        lr = cur_lr
 
         if step % args.log_interval == 0 or step == max_iters:
             dt = time.time() - t0
@@ -309,8 +363,20 @@ def main() -> None:
     })
     final_loss = evaluate()
     log(f"готово: step {step}, val_loss {final_loss:.4f}, best {best_val:.4f}")
+    if is_cuda:
+        peak = torch.cuda.max_memory_allocated() / 2**30
+        log(f"пик VRAM (PyTorch): {peak:.2f} GiB")
+    if train_bar is not None:
+        train_bar.close()
+    if val_bar is not None:
+        val_bar.close()
     log_file.close()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n[прервано] обучение продолжится с последнего last.pt — "
+              "запустите ту же команду ещё раз", file=sys.stderr)
+        sys.exit(130)

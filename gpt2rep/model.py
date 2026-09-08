@@ -155,15 +155,46 @@ class GPT2LMHeadModel(nn.Module):
     def tie_weights(self) -> None:
         self.lm_head.weight = self.transformer.wte.weight
 
+    # Кусок логитов (chunk, 50257) во float32 весит chunk×50257×4 байт:
+    # при 2048 токенов это ~0.4GB вместо (B×T)×50257×4 ≈ 1.6GB+ на батч 8×1024.
+    # Именно полный тензор логитов+softmax буферы съедали VRAM (см. OOM),
+    # поэтому loss считается по кускам последовательности.
+    LOSS_CHUNK_TOKENS = 1024
+
+    @staticmethod
+    def _chunk_loss(h: torch.Tensor, y: torch.Tensor, w: torch.Tensor) -> torch.Tensor:
+        """logits+cross_entropy для одного куска токенов; вызывается под autocast."""
+        logits = F.linear(h, w)
+        return F.cross_entropy(logits.float(), y)
+
     def forward(self, idx: torch.Tensor, targets: torch.Tensor | None = None):
-        """idx: (B, T) int64. Если заданы targets (B, T) — возвращает также loss."""
-        logits = self.lm_head(self.transformer(idx))
+        """idx: (B, T) int64.
+
+        Без targets возвращает (logits, None) — полный тензор логитов.
+        С targets возвращает (None, loss): logits+CE считаются кусками по
+        LOSS_CHUNK_TOKENS токенов; в режиме обучения каждый кусок оборачивается
+        в checkpoint, поэтому в backward логиты пересчитываются и в памяти
+        между шагами их полная версия не хранится вовсе.
+        """
+        hidden = self.transformer(idx)
         if targets is None:
-            return logits, None
-        loss = F.cross_entropy(
-            logits.reshape(-1, logits.size(-1)).float(), targets.reshape(-1)
-        )
-        return logits, loss
+            return self.lm_head(hidden), None
+        B, T, C = hidden.shape
+        h = hidden.reshape(B * T, C)
+        y = targets.reshape(B * T)
+        chunk = self.LOSS_CHUNK_TOKENS
+        loss_sum = torch.zeros((), device=hidden.device, dtype=torch.float32)
+        for i in range(0, B * T, chunk):
+            hc, yc = h[i:i + chunk], y[i:i + chunk]
+            if self.training:
+                # use_reentrant=False корректно работает под autocast
+                part = torch.utils.checkpoint.checkpoint(
+                    self._chunk_loss, hc, yc, self.lm_head.weight, use_reentrant=False
+                )
+            else:
+                part = self._chunk_loss(hc, yc, self.lm_head.weight)
+            loss_sum = loss_sum + part * yc.numel()
+        return None, loss_sum / (B * T)
 
     def num_params(self, non_embedding: bool = False) -> int:
         n = sum(p.numel() for p in self.parameters())
