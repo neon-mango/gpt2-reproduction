@@ -1,8 +1,10 @@
-"""Генерация текста обученной моделью.
+"""Генерация текста обученной моделью: продолжает заданный пользователем текст.
 
 Примеры:
-  python generate.py --prompt "The meaning of life is"
-  python generate.py --ckpt checkpoints/run1/best.pt --temperature 0.8 --top-k 50
+  python generate.py "The meaning of life is"          # позиционный промпт
+  python generate.py --ckpt checkpoints/run1/best.pt --tokens 400
+  python generate.py --temperature 0.8 --top-k 50
+  echo "Once upon a time" | python generate.py -       # текст из stdin
   python generate.py --greedy --tokens 200
 """
 
@@ -22,18 +24,27 @@ from gpt2rep.tokenizer import GPT2Tokenizer
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("text", nargs="?", default=None,
+                   help="текст-продолжение; \"-\" читает stdin; "
+                        "по умолчанию \"The meaning of life is\"")
+    p.add_argument("--prompt", dest="text", help="то же, что позиционный аргумент")
     p.add_argument("--ckpt", type=Path, default=REPO / "checkpoints" / "run1" / "best.pt",
                    help="чекпоинт обучения (best.pt / last.pt / iter_N.pt)")
     p.add_argument("--hf-safetensors", type=Path, default=None,
                    help="вместо своего чекпоинта загрузить эталон (model.safetensors)")
-    p.add_argument("--prompt", type=str, default="The meaning of life is")
     p.add_argument("--tokens", type=int, default=200)
     p.add_argument("--temperature", type=float, default=0.8)
     p.add_argument("--top-k", type=int, default=50)
     p.add_argument("--top-p", type=float, default=None)
-    p.add_argument("--greedy", action="store_true", help="арgmах вместо сэмплирования")
+    p.add_argument("--greedy", action="store_true", help="argmax вместо сэмплирования")
     p.add_argument("--seed", type=int, default=None)
     args = p.parse_args()
+
+    prompt = args.text or "The meaning of life is"
+    if prompt == "-":
+        prompt = sys.stdin.read().strip()
+    if not prompt:
+        sys.exit("пустой промпт")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     tok = GPT2Tokenizer.load(REPO / "data" / "tokenizer")
@@ -51,7 +62,7 @@ def main() -> None:
     if args.seed is not None:
         torch.manual_seed(args.seed)
 
-    ctx = torch.tensor([tok.encode(args.prompt)], device=device)
+    ctx = torch.tensor([tok.encode(prompt)], device=device)
     out = model.generate(
         ctx,
         max_new_tokens=args.tokens,
