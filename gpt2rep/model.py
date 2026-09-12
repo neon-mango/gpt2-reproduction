@@ -77,6 +77,38 @@ class CausalSelfAttention(nn.Module):
         y = y.transpose(1, 2).contiguous().view(B, T, C)
         return self.resid_dropout(self.c_proj(y))
 
+    def forward_cached(self, x: torch.Tensor, pk: torch.Tensor | None, pv: torch.Tensor | None,
+                       past_len=None):
+        """Инкрементальный путь для генерации/ONNX-экспорта (без SDPA —
+        обычный matmul+softmax, безопасно экспортируется; dropout выключен,
+        т.к. путь только для eval).
+
+        pk/pv: кэш ключей/значений (B, n_head, P, head_dim) или None (prefill).
+        past_len: длина кэша (int или 0-dim int64 тензор — для динамического
+        ONNX-экспорта); если None, берётся из формы pk.
+        Возвращает (выход attention, новый кэш)."""
+        B, T, C = x.shape
+        q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
+        q = q.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+        k = k.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+        v = v.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+        if pk is not None:
+            k = torch.cat([pk, k], dim=2)
+            v = torch.cat([pv, v], dim=2)
+        if past_len is None:
+            past_len = k.size(2) - T
+        att = (q @ k.transpose(-2, -1)) * self.scale
+        # токен на позиции past_len+i видит ключи 0..past_len+i.
+        # seq_len берётся тензором (Shape->Gather), иначе в трассировке ONNX
+        # длина запечётся константой из dummy-примера
+        seq_len = torch._shape_as_tensor(x)[1]
+        q_pos = torch.arange(past_len, past_len + seq_len, device=x.device)
+        kv_idx = torch.arange(past_len + seq_len, device=x.device)
+        mask = kv_idx[None, :] <= q_pos[:, None]
+        att = att.masked_fill(~mask, float("-inf")).softmax(dim=-1)
+        y = (att @ v).transpose(1, 2).contiguous().view(B, T, C)
+        return self.c_proj(y), (k, v)
+
 
 class MLP(nn.Module):
     def __init__(self, config: GPT2Config):
@@ -103,6 +135,13 @@ class Block(nn.Module):
         x = x + self.attn(self.ln_1(x))
         x = x + self.mlp(self.ln_2(x))
         return x
+
+    def forward_cached(self, x: torch.Tensor, pk: torch.Tensor | None, pv: torch.Tensor | None,
+                       past_len=None):
+        y, present = self.attn.forward_cached(self.ln_1(x), pk, pv, past_len)
+        x = x + y
+        x = x + self.mlp(self.ln_2(x))
+        return x, present
 
 
 class GPT2Model(nn.Module):
@@ -141,6 +180,30 @@ class GPT2Model(nn.Module):
         for block in self.h:
             x = block(x)
         return self.ln_f(x)
+
+    def forward_cached(self, idx: torch.Tensor, past: torch.Tensor | None = None,
+                       past_len=None):
+        """Инкрементальный путь (генерация/ONNX): возвращает (h, new_past).
+
+        idx — НОВЫЕ токены (B, T); past — состояние (n_layer, 2, B, n_head,
+        P, head_dim) или None. Поддерживается prefill (P=0) и декодирование
+        (T=1). Позиции берутся со смещением past_len (int или 0-dim int64
+        тензор; по умолчанию — из формы past)."""
+        B, T = idx.shape
+        if past_len is None:
+            past_len = 0 if past is None else past.shape[4]
+        # seq_len тензором — динамический Range в ONNX (см. forward_cached)
+        seq_len = torch._shape_as_tensor(idx)[1]
+        pos = torch.arange(past_len, past_len + seq_len, device=idx.device)
+        x = self.drop(self.wte(idx) + self.wpe(pos))
+        presents = []
+        for i, block in enumerate(self.h):
+            pk = pv = None
+            if past is not None:
+                pk, pv = past[i, 0], past[i, 1]
+            x, present = block.forward_cached(x, pk, pv, past_len)
+            presents.append(torch.stack(present))
+        return self.ln_f(x), torch.stack(presents)
 
 
 class GPT2LMHeadModel(nn.Module):
@@ -286,3 +349,25 @@ def gpt2_774m() -> GPT2LMHeadModel:  # gpt2-large
 
 def gpt2_1542m() -> GPT2LMHeadModel:  # gpt2-xl
     return GPT2LMHeadModel(GPT2Config(n_embd=1600, n_layer=48, n_head=25))
+
+
+class OnnxWrapper(nn.Module):
+    """Обёртка для ONNX-экспорта (браузерный инференс через onnxruntime-web).
+
+    Входы:  ids      — (batch, seq) int64, новые токены;
+            state    — (n_layer, 2, batch, n_head, past, head_dim); для
+                       prefill past=0 (тензоры нулевой длины);
+            past_len — 0-dim int64, длина кэша (0 для prefill). Отдельный
+                       вход, чтобы длина была динамической в графе.
+    Выходы: logits — логиты ПОСЛЕДНЕГО токена (batch, vocab) во float32;
+            new_state — состояние с дописанными k/v.
+    """
+
+    def __init__(self, model: GPT2LMHeadModel):
+        super().__init__()
+        self.model = model
+
+    def forward(self, idx: torch.Tensor, state: torch.Tensor, past_len: torch.Tensor):
+        h, new_state = self.model.transformer.forward_cached(idx, state, past_len)
+        logits = self.model.lm_head(h[:, -1:, :])  # (B, 1, V)
+        return logits.squeeze(1).float(), new_state

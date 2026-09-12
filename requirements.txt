@@ -10,3 +10,7 @@ datasets
 safetensors
 # только для verify_parity.py (сверка с эталоном HF, в обучении не участвует)
 transformers
+# только для scripts/export_onnx.py (браузерный инференс)
+onnx
+onnxruntime
+onnxscript

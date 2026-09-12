@@ -4,6 +4,10 @@ checkpoints/
 *.pt
 *.bin
 *.safetensors
+*.onnx
+web/encoder.json
+web/vocab.bpe
+web/config.json
 *.log
 venv/
 .venv/

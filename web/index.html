@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GPT-2 (своя репродукция) — инференс в браузере</title>
+<style>
+    :root { color-scheme: dark; }
+    body {
+        font-family: system-ui, sans-serif;
+        max-width: 860px; margin: 2rem auto; padding: 0 1rem;
+        background: #14161a; color: #e6e6e6; line-height: 1.55;
+    }
+    h1 { font-size: 1.3rem; }
+    h1 small { color: #8a929e; font-weight: normal; }
+    textarea, input {
+        background: #1d2129; color: #e6e6e6; border: 1px solid #343a46;
+        border-radius: 6px; padding: .5rem; font: inherit; width: 100%;
+        box-sizing: border-box;
+    }
+    .row { display: flex; gap: .6rem; margin: .7rem 0; align-items: center; }
+    .row label { white-space: nowrap; color: #8a929e; font-size: .9rem; }
+    .row input[type=number] { width: 6.5rem; }
+    button {
+        background: #2f6fed; color: white; border: 0; border-radius: 6px;
+        padding: .55rem 1.2rem; font: inherit; cursor: pointer;
+    }
+    button:disabled { background: #3a3f4a; cursor: not-allowed; }
+    #stop { background: #4a3a3a; }
+    #output {
+        white-space: pre-wrap; background: #1d2129; border: 1px solid #343a46;
+        border-radius: 6px; padding: 1rem; min-height: 8rem; margin-top: .7rem;
+    }
+    #status, #stats { color: #8a929e; font-size: .85rem; }
+</style>
+</head>
+<body>
+<h1>GPT-2 124M — своя репродукция <small>· инференс в браузере</small></h1>
+<p id="status">инициализация...</p>
+
+<textarea id="prompt" rows="3">The meaning of life is</textarea>
+
+<div class="row">
+    <label>токенов</label><input id="tokens" type="number" value="150" min="1" max="1000">
+    <label>temperature</label><input id="temperature" type="number" value="0.8" step="0.05" min="0.1" max="2">
+    <label>top-k</label><input id="topk" type="number" value="50" min="1" max="500">
+    <button id="generate" disabled>Генерировать</button>
+    <button id="stop" disabled>Стоп</button>
+</div>
+
+<pre id="output">...</pre>
+<p id="stats"></p>
+
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.webgpu.min.js"></script>
+<script src="main.js"></script>
+</body>
+</html>
