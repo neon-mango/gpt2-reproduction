@@ -5,6 +5,7 @@ checkpoints/
 *.bin
 *.safetensors
 *.onnx
+*.onnx.data
 web/encoder.json
 web/vocab.bpe
 web/config.json
@@ -17,3 +18,4 @@ __pycache__/
 
 # локальная ссылка на предыдущую попытку (вне репо)
 prev-llm-attempt
+
