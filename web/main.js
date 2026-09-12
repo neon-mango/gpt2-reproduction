@@ -97,17 +97,53 @@ async function generate() {
 
 let stopFlag = false;
 
+let modelBuffer = null;   // Uint8Array: кэш, чтобы WASM-фолбэк не качал заново
+
+async function loadModelBuffer() {
+    if (modelBuffer) return modelBuffer;
+    // модель целиком (локальный файл) или сборка из частей (GitHub-лимит
+    // 100MB/файл): config.model_chunks -> последовательный fetch в один буфер
+    if (cfg.model_chunks && cfg.model_chunks.length) {
+        const parts = [];
+        for (let i = 0; i < cfg.model_chunks.length; i++) {
+            $("status").textContent = `модель: часть ${i + 1}/${cfg.model_chunks.length}...`;
+            const resp = await fetch(cfg.model_chunks[i]);
+            if (!resp.ok) throw new Error(`часть ${cfg.model_chunks[i]}: HTTP ${resp.status}`);
+            parts.push(new Uint8Array(await resp.arrayBuffer()));
+            const mb = parts.reduce((s, p) => s + p.length, 0) / 2**20;
+            $("status").textContent = `модель: ${mb.toFixed(0)} MiB загружено...`;
+        }
+        const total = parts.reduce((s, p) => s + p.length, 0);
+        const buf = new Uint8Array(total);
+        let off = 0;
+        for (const p of parts) { buf.set(p, off); off += p.length; }
+        if (cfg.model_sha256) {
+            const digest = await crypto.subtle.digest("SHA-256", buf);
+            const hex = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, "0")).join("");
+            if (hex !== cfg.model_sha256) throw new Error("sha256 модели не совпал");
+        }
+        modelBuffer = buf;
+    } else {
+        const resp = await fetch("gpt2_124m.onnx");
+        if (!resp.ok) throw new Error(`модель: HTTP ${resp.status}`);
+        modelBuffer = new Uint8Array(await resp.arrayBuffer());
+    }
+    return modelBuffer;
+}
+
 async function init() {
     cfg = await (await fetch("config.json")).json();
     tok = await GPT2TokenizerJS.load(".");
     $("status").textContent = `модель загружается (${cfg.dtype}, шаг ${cfg.ckpt_step})...`;
-    const options = { executionProviders: ["webgpu"], graphOptimizationLevel: "all" };
     try {
-        session = await ort.InferenceSession.create("gpt2_124m.onnx", options);
+        const buf = await loadModelBuffer();
+        session = await ort.InferenceSession.create(buf.buffer,
+            { executionProviders: ["webgpu"], graphOptimizationLevel: "all" });
         $("status").textContent = "бэкенд: WebGPU";
     } catch (e) {
         console.warn("WebGPU недоступен, фолбэк на WASM:", e);
-        session = await ort.InferenceSession.create("gpt2_124m.onnx",
+        const buf = await loadModelBuffer();
+        session = await ort.InferenceSession.create(buf.buffer,
             { executionProviders: ["wasm"], graphOptimizationLevel: "all" });
         $("status").textContent = "бэкенд: WASM (медленнее; включите WebGPU в браузере)";
     }

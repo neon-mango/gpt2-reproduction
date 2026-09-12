@@ -215,6 +215,43 @@ JS-порт (`web/bpe.js`), совпадающий с каноничными ID 
 из интернета достаточно любого статического хостинга: `web/` не имеет
 сборочных зависимостей, модель и файлы токенизатора кладутся рядом.
 
+### Публикация на GitHub Pages
+
+Модель (~326 МБ) больше лимита GitHub на файл в репозитории (100 МБ), поэтому
+она нарезается на части (`scripts/split_model.py`), а собирается прямо
+в браузере в ArrayBuffer (с проверкой sha256). Два варианта размещения частей:
+
+**Вариант А (рекомендуется): части в GitHub Release — репозиторий остаётся лёгким.**
+
+```bash
+./venv/bin/python scripts/export_onnx.py     # web/gpt2_124m.onnx
+./venv/bin/python scripts/split_model.py     # web/model/gpt2_124m.part-000..003 (+ запись в config.json)
+
+# части в Release (нужен gh CLI; лимит 2 ГБ на файл, CORS включён):
+gh release create model-v1 --title "GPT-2 124M weights" --notes "ONNX fp16"
+gh release upload model-v1 web/model/gpt2_124m.part-*
+```
+
+Затем в `web/config.json` заменить `model_chunks` на абсолютные URL
+релиза (страница может жить в одном месте, модель — в другом):
+
+```json
+"model_chunks": [
+  "https://github.com/USER/REPO/releases/download/model-v1/gpt2_124m.part-000",
+  "...part-001", "...part-002", "...part-003"
+]
+```
+
+**Вариант Б (проще, но репозиторий толстеет на ~326 МБ): части прямо в репо.**
+`web/model/` исключён из .gitignore, части коммитятся как есть —
+каждая <100 МБ, Pages их отдаст; `config.json` уже указывает относительные
+пути. Не забудьте закоммитить и `web/config.json` (с `model_chunks`),
+`web/encoder.json`, `web/vocab.bpe`.
+
+Включение Pages: Settings → Pages → Source: Deploy from a branch → корень
+ветки. Страница будет на `https://USER.github.io/REPO/web/` — все пути в
+демо относительные, подкаталог работает без настроек.
+
 ## Структура репозитория
 
 ```
@@ -229,6 +266,7 @@ scripts/
   compare_bpe.py         # измерения: старый BPE vs GPT-2 BPE -> docs/
   eval_model.py          # val_loss/перплексия чекпоинта + сэмплы
   export_onnx.py         # чекпоинт -> web/gpt2_124m.onnx (браузерный инференс)
+  split_model.py         # нарезка модели на части <100MB для GitHub
 web/                     # демо в браузере: index.html, bpe.js (BPE на JS), main.js
 train.py           # обучение (resume, AMP, cosine LR, grad clip, чекпоинты)
 generate.py        # продолжение текста (temperature/top-k/top-p/greedy, stdin)

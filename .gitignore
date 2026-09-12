@@ -6,6 +6,7 @@ checkpoints/
 *.safetensors
 *.onnx
 *.onnx.data
+web/model/
 web/encoder.json
 web/vocab.bpe
 web/config.json
