@@ -11,7 +11,7 @@ const ORT_VERSION = '1.22.0';
 const EOT = 50256;
 
 export default function App() {
-    const [status, setStatus] = useState('инициализация...');
+    const [status, setStatus] = useState('initializing...');
     const [ready, setReady] = useState(false);
     const [backend, setBackend] = useState('');
     const [modelInfo, setModelInfo] = useState('');
@@ -51,66 +51,45 @@ export default function App() {
         return [...new Uint8Array(d)].map(b => b.toString(16).padStart(2, '0')).join('');
     }
 
-    // автоопределение USER/REPO на проектных страницах *.github.io
-    function detectRepo() {
-        const m = location.hostname.match(/^([\w.-]+)\.github\.io$/);
-        if (!m) return cfgRef.current.repo || '';
-        const seg = location.pathname.split('/').filter(Boolean)[0];
-        if (seg && seg !== `${m[1]}.github.io`) return `${m[1]}/${seg}`;
-        return `${m[1]}/${m[1]}.github.io`;
-    }
-
-    // Порядок источника модели: GitHub Release (latest или тег — тег пинает
-    // модель к коммиту фронтенда) -> локальный gpt2_124m.onnx.
+    // Model source: chunk URLs from config.model_chunks (raw.githubusercontent
+    // serves CORS '*'; pin a tag/commit in the URL to bind model to frontend
+    // revision) -> local gpt2_124m.onnx (npm run dev).
     async function resolveModelSource() {
         const cfg = cfgRef.current;
-        if (!cfg.release) return { urls: ['gpt2_124m.onnx'], digests: [null], label: 'локальный файл' };
-        const repo = cfg.repo || detectRepo();
-        if (!repo) throw new Error('укажите repo в config.json (вне *.github.io автоопределение невозможно)');
-        const base = `https://api.github.com/repos/${repo}/releases/`;
-        const url = cfg.release === 'latest' ? base + 'latest' : base + 'tags/' + cfg.release;
-        const rel = await (await fetch(url)).json();
-        if (!rel.assets) throw new Error(`GitHub API: ${rel.message || 'релиз не найден'}`);
-        const assets = rel.assets
-            .filter(a => /gpt2_124m\.part-\d+$/.test(a.name))
-            .sort((a, b) => (a.name < b.name ? -1 : 1));
-        if (!assets.length) throw new Error(`в релизе ${rel.tag_name} нет частей gpt2_124m.part-*`);
-        return {
-            urls: assets.map(a => a.browser_download_url),
-            digests: assets.map(a => a.digest || null),
-            label: `${repo}@${rel.tag_name}`,
-        };
+        if (cfg.model_chunks && cfg.model_chunks.length)
+            return { urls: cfg.model_chunks, label: 'chunks' };
+        return { urls: ['gpt2_124m.onnx'], label: 'local file' };
     }
 
     async function loadModelBuffer() {
+        if (modelBuffer) return modelBuffer;
         const source = await resolveModelSource();
         const parts = [];
         for (let i = 0; i < source.urls.length; i++) {
-            setStatus(`модель ${source.label}: часть ${i + 1}/${source.urls.length}...`);
+            setStatus(`model ${source.label}: part ${i + 1}/${source.urls.length}...`);
             const resp = await fetch(source.urls[i]);
-            if (!resp.ok) throw new Error(`часть ${i + 1}: HTTP ${resp.status}`);
-            const bytes = new Uint8Array(await resp.arrayBuffer());
-            const want = source.digests && source.digests[i];
-            if (want && want.startsWith('sha256:')) {
-                const got = await sha256hex(bytes);
-                if (got !== want.slice(7)) throw new Error(`часть ${i + 1}: sha256 не совпал`);
-            }
-            parts.push(bytes);
+            if (!resp.ok) throw new Error(`part ${i + 1}: HTTP ${resp.status}`);
+            parts.push(new Uint8Array(await resp.arrayBuffer()));
             const mb = parts.reduce((s, p) => s + p.length, 0) / 2 ** 20;
-            setStatus(`модель ${source.label}: ${mb.toFixed(0)} MiB загружено...`);
+            setStatus(`model ${source.label}: ${mb.toFixed(0)} MiB loaded...`);
         }
         const total = parts.reduce((s, p) => s + p.length, 0);
         const buf = new Uint8Array(total);
         let off = 0;
         for (const p of parts) { buf.set(p, off); off += p.length; }
-        return buf;
+        if (cfgRef.current.model_sha256 && await sha256hex(buf) !== cfgRef.current.model_sha256)
+            throw new Error('model sha256 mismatch');
+        modelBuffer = buf;
+        return modelBuffer;
     }
 
     async function init() {
         try {
-            cfgRef.current = await (await fetch('config.json')).json();
+            const cfgResp = await fetch('config.json');
+            if (!cfgResp.ok) throw new Error(`config.json: HTTP ${cfgResp.status}`);
+            cfgRef.current = await cfgResp.json();
             tokenizerRef.current = await GPT2TokenizerJS.load('');
-            setStatus(`модель (${cfgRef.current.dtype}, шаг ${cfgRef.current.ckpt_step}) загружается...`);
+            setStatus(`loading model (${cfgRef.current.dtype}, step ${cfgRef.current.ckpt_step})...`);
             ort.env.wasm.wasmPaths = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ORT_VERSION}/dist/`;
             const buf = await loadModelBuffer();
             let session;
@@ -119,19 +98,19 @@ export default function App() {
                     { executionProviders: ['webgpu'], graphOptimizationLevel: 'all' });
                 setBackend('WebGPU');
             } catch (e) {
-                console.warn('WebGPU недоступен, фолбэк на WASM:', e);
+                console.warn('WebGPU unavailable, falling back to WASM:', e);
                 session = await ort.InferenceSession.create(buf.buffer,
                     { executionProviders: ['wasm'], graphOptimizationLevel: 'all' });
-                setBackend('WASM (медленнее)');
+                setBackend('WASM (slower)');
             }
             sessionRef.current = session;
-            setModelInfo(`шаг ${cfgRef.current.ckpt_step}, ${cfgRef.current.dtype}`);
-            setStatus('готово');
+            setModelInfo(`step ${cfgRef.current.ckpt_step}, ${cfgRef.current.dtype}`);
+            setStatus('ready');
             setReady(true);
         } catch (e) {
             console.error(e);
             setStatus('');
-            setError(`не удалось загрузить модель: ${e.message}`);
+            setError(`failed to load model: ${e.message}`);
         }
     }
 
@@ -177,7 +156,7 @@ export default function App() {
         try {
             const tok = tokenizerRef.current;
             const ids = tok.encode(text);
-            let logits = await step(ids);                    // префилл
+            let logits = await step(ids);                    // prefill
             const generated = [...ids];
             for (let i = 0; i < maxTokens; i++) {
                 if (stopRef.current || pastLenRef.current >= cfgRef.current.n_positions) break;
@@ -186,14 +165,14 @@ export default function App() {
                 generated.push(next);
                 setOutput(tok.decode(generated));
                 const tps = pastLenRef.current / ((performance.now() - t0) / 1000);
-                setStats(`${i + 1} токенов · ${tps.toFixed(0)} ток/с`);
+                setStats(`${i + 1} tokens · ${tps.toFixed(0)} tok/s`);
                 await new Promise(r => setTimeout(r, 0));    // кадр на отрисовку
                 logits = await step([next]);
             }
-            setStats(s => `${s} · готово за ${((performance.now() - t0) / 1000).toFixed(1)} с`);
+            setStats(s => `${s} · done in ${((performance.now() - t0) / 1000).toFixed(1)}s`);
         } catch (e) {
             console.error(e);
-            setError(`ошибка генерации: ${e.message}`);
+            setError(`generation error: ${e.message}`);
         }
     }
 
@@ -202,7 +181,7 @@ export default function App() {
             <AppBar position="static">
                 <Toolbar>
                     <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-                        GPT-2 124M — своя репродукция
+                        GPT-2 124M reproduction
                     </Typography>
                     {backend && <Chip label={backend} color="primary" size="small" sx={{ mr: 1 }} />}
                     {modelInfo && <Chip label={modelInfo} variant="outlined" size="small" />}
@@ -219,7 +198,7 @@ export default function App() {
 
                 <Paper sx={{ p: 2 }}>
                     <TextField
-                        label="Промпт"
+                        label="Prompt"
                         multiline rows={3} fullWidth
                         value={prompt}
                         onChange={e => setPrompt(e.target.value)}
@@ -227,7 +206,7 @@ export default function App() {
                     />
                     <Box sx={{ display: 'flex', gap: 3, mt: 2, flexWrap: 'wrap' }}>
                         <Box sx={{ minWidth: 150 }}>
-                            <Typography gutterBottom color="text.secondary">новых токенов</Typography>
+                            <Typography gutterBottom color="text.secondary">new tokens</Typography>
                             <Slider value={maxTokens} min={16} max={512} step={16}
                                     valueLabelDisplay="auto"
                                     onChange={(_, v) => setMaxTokens(v)} disabled={!ready} />
@@ -245,15 +224,15 @@ export default function App() {
                                     onChange={(_, v) => setTopK(v)} disabled={!ready} />
                         </Box>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, ml: 'auto' }}>
-                            <Tooltip title="sampling останавливается по <|endoftext|>">
+                            <Tooltip title="sampling stops on the <|endoftext|> token">
                                 <Button variant="contained" onClick={generate}
                                         disabled={!ready} sx={{ minWidth: 140 }}>
-                                    Генерировать
+                                    Generate
                                 </Button>
                             </Tooltip>
                             <Button variant="outlined" color="error"
                                     onClick={() => { stopRef.current = true; }}>
-                                Стоп
+                                Stop
                             </Button>
                         </Box>
                     </Box>

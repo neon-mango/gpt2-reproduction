@@ -34,13 +34,13 @@ export class GPT2TokenizerJS {
     static async load(dir) {
         const [encoder, mergesText] = await Promise.all([
             fetch(`${dir}/encoder.json`).then(r => r.json()),
-            fetch(`${dir}/vocab.bpe`).then(r => r.text()),
+            fetch(`${dir}/vocab.bpe`).then(r => { if (!r.ok) throw new Error(`vocab.bpe: HTTP ${r.status}`); return r.text(); }),
         ]);
         const merges = mergesText.split("\n")
             .map(line => line.trim())
             .filter(line => line && !line.startsWith("#"))
             .map(line => line.split(" "));
-        return new GPT2TokenizerJS(encoder, merges);
+        return new GPT2TokenizerJS(encoderJson, merges);
     }
 
     bpe(token) {
