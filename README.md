@@ -194,63 +194,53 @@ rm data/tokens/train.bin data/tokens/val.bin data/tokens/meta.json
 
 ## Запуск в браузере
 
-Модель экспортируется в ONNX и работает целиком на стороне клиента
-(onnxruntime-web: WebGPU с фолбэком на WASM), токенизатор — собственный
-JS-порт (`web/bpe.js`), совпадающий с каноничными ID GPT-2.
+Фронтенд — React + Material UI (сборка Vite), инференс — onnxruntime-web
+(WebGPU с фолбэком на WASM), токенизатор — собственный JS-порт
+(`web/src/bpe.js`), совпадающий с каноничными ID GPT-2. Модель отдаётся
+частями из GitHub Release и собирается в браузере в ArrayBuffer
+(с проверкой sha256).
+
+### Локальная разработка
 
 ```bash
-# 1. Однократно: экспорт best.pt в ONNX + проверка графа (~3-5 минут)
+# экспорт чекпоинта в ONNX (однократно; ~3-5 минут) -> web/public/gpt2_124m.onnx
 ./venv/bin/pip install onnx onnxruntime onnxscript
 ./venv/bin/python scripts/export_onnx.py
-#    -> web/gpt2_124m.onnx (fp16, ~310 МБ) + копии encoder.json/vocab.bpe
-#    проверка: префилл и декодирование сверяются с torch (fp32-граф: max|Δ| ~ 1e-5)
 
-# 2. Раздать статически и открыть в браузере (Chrome/Edge — WebGPU):
-./venv/bin/python -m http.server 8000
-#    открыть http://localhost:8000/web/
+cd web
+npm install
+npm run dev          # http://localhost:5173 (модель — из релиза или локальная)
+npm run build        # прод-сборка в dist/
 ```
-
-Генерация инкрементальная (KV-кэш внутри ONNX-графа, состояние передаётся
-через вход `state`), скорость — десятки токенов/с на WebGPU. Для доступности
-из интернета достаточно любого статического хостинга: `web/` не имеет
-сборочных зависимостей, модель и файлы токенизатора кладутся рядом.
 
 ### Публикация на GitHub Pages
 
-Модель (~326 МБ) больше лимита GitHub на файл в репозитории (100 МБ), поэтому
-она нарезается на части (`scripts/split_model.py`), а собирается прямо
-в браузере в ArrayBuffer (с проверкой sha256). Два варианта размещения частей:
-
-**Вариант А (рекомендуется): части в GitHub Release — репозиторий остаётся лёгким.**
+Модель (~326 МБ) больше лимита GitHub на файл (100 МБ), поэтому она нарезается
+на части и выкладывается в Release; страница собирается GitHub Actions
+(`.github/workflows/deploy-pages.yml`) и деплоится в Pages автоматически
+при пуше в master (включите: Settings → Pages → Source: GitHub Actions).
 
 ```bash
-./venv/bin/python scripts/export_onnx.py     # web/gpt2_124m.onnx
-./venv/bin/python scripts/split_model.py     # web/model/gpt2_124m.part-000..003 (+ запись в config.json)
+./venv/bin/python scripts/export_onnx.py     # web/public/gpt2_124m.onnx
+./venv/bin/python scripts/split_model.py     # web/public/model/gpt2_124m.part-000..003
 
-# части в Release (нужен gh CLI; лимит 2 ГБ на файл, CORS включён):
-gh release create model-v1 --title "GPT-2 124M weights" --notes "ONNX fp16"
-gh release upload model-v1 web/model/gpt2_124m.part-*
+# привязать релиз к тому же коммиту, что и задеплоенный фронтенд:
+git tag model-v1 && git push origin model-v1
+gh release create model-v1 --target model-v1 --title "GPT-2 124M weights"
+gh release upload model-v1 web/public/model/gpt2_124m.part-*
 ```
 
-Затем в `web/config.json` заменить `model_chunks` на абсолютные URL
-релиза (страница может жить в одном месте, модель — в другом):
+`web/public/config.json` (коммитится в репо) указывает, откуда брать модель:
 
-```json
-"model_chunks": [
-  "https://github.com/USER/REPO/releases/download/model-v1/gpt2_124m.part-000",
-  "...part-001", "...part-002", "...part-003"
-]
-```
+- `"release": "latest"` — последний релиз этого репозитория (по умолчанию);
+- `"release": "model-v1"` — закрепить конкретный тег: фронтенд и модель
+  гарантированно одного коммита (изменяется вручную при обновлении модели);
+- имя репозитория на `*.github.io` определяется автоматически, вне Pages —
+  заполните `"repo": "USER/REPO"`;
+- ручной override — `"model_chunks": ["URL", ...]`.
 
-**Вариант Б (проще, но репозиторий толстеет на ~326 МБ): части прямо в репо.**
-`web/model/` исключён из .gitignore, части коммитятся как есть —
-каждая <100 МБ, Pages их отдаст; `config.json` уже указывает относительные
-пути. Не забудьте закоммитить и `web/config.json` (с `model_chunks`),
-`web/encoder.json`, `web/vocab.bpe`.
-
-Включение Pages: Settings → Pages → Source: Deploy from a branch → корень
-ветки. Страница будет на `https://USER.github.io/REPO/web/` — все пути в
-демо относительные, подкаталог работает без настроек.
+Порядок версий: у Release-ассетов проверяются sha256-дайджесты (поле `digest`
+GitHub API), у локального файла — `model_sha256` из config.json.
 
 ## Структура репозитория
 
@@ -265,9 +255,9 @@ scripts/
   verify_parity.py       # сверка токенизатора и логитов с эталоном HF
   compare_bpe.py         # измерения: старый BPE vs GPT-2 BPE -> docs/
   eval_model.py          # val_loss/перплексия чекпоинта + сэмплы
-  export_onnx.py         # чекпоинт -> web/gpt2_124m.onnx (браузерный инференс)
+  export_onnx.py         # чекпоинт -> web/public/gpt2_124m.onnx (браузерный инференс)
   split_model.py         # нарезка модели на части <100MB для GitHub
-web/                     # демо в браузере: index.html, bpe.js (BPE на JS), main.js
+web/                     # фронтенд: React + Material UI (Vite), инференс ORT-web
 train.py           # обучение (resume, AMP, cosine LR, grad clip, чекпоинты)
 generate.py        # продолжение текста (temperature/top-k/top-p/greedy, stdin)
 docs/

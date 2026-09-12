@@ -18,7 +18,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 WEB = REPO / "web"
-MODEL = WEB / "gpt2_124m.onnx"
+MODEL = WEB / "public" / "gpt2_124m.onnx"
 CHUNK_MB = 90
 
 
@@ -28,7 +28,7 @@ def main() -> None:
     p.add_argument("--undo", action="store_true", help="удалить части и ключ model_chunks")
     args = p.parse_args()
 
-    config_path = WEB / "config.json"
+    config_path = WEB / "public" / "config.json"
     config = json.loads(config_path.read_text())
 
     if args.undo:
@@ -45,7 +45,7 @@ def main() -> None:
     if not MODEL.exists():
         sys.exit(f"нет {MODEL} — сначала scripts/export_onnx.py")
 
-    out_dir = WEB / "model"
+    out_dir = WEB / "public" / "model"
     out_dir.mkdir(exist_ok=True)
     chunk = args.size * 2**20
     data = MODEL.read_bytes()

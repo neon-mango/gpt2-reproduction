@@ -6,10 +6,9 @@ checkpoints/
 *.safetensors
 *.onnx
 *.onnx.data
-web/model/
-web/encoder.json
-web/vocab.bpe
-web/config.json
+web/public/model/
+node_modules/
+web/dist/
 *.log
 venv/
 .venv/

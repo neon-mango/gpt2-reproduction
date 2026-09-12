@@ -1,0 +1,11 @@
+{
+  "dtype": "fp16",
+  "n_layer": 12,
+  "n_head": 12,
+  "head_dim": 64,
+  "vocab_size": 50257,
+  "n_positions": 1024,
+  "ckpt_step": 17250,
+  "release": "latest",
+  "repo": ""
+}

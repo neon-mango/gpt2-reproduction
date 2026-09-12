@@ -128,7 +128,7 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--ckpt", type=Path, default=REPO / "checkpoints" / "run1" / "best.pt")
-    p.add_argument("--out", type=Path, default=WEB / "gpt2_124m.onnx")
+    p.add_argument("--out", type=Path, default=WEB / "public" / "gpt2_124m.onnx")
     p.add_argument("--dtype", choices=["fp16", "fp32"], default="fp16",
                    help="fp16 вдвое меньше и быстрее на WebGPU")
     p.add_argument("--skip-verify", action="store_true")
@@ -161,14 +161,22 @@ def main() -> None:
     # файлы для веб-страницы
     WEB.mkdir(parents=True, exist_ok=True)
     for f in ("encoder.json", "vocab.bpe"):
-        shutil.copy(REPO / "data" / "tokenizer" / f, WEB / f)
-    (WEB / "config.json").write_text(json.dumps({
+        shutil.copy(REPO / "data" / "tokenizer" / f, WEB / "public" / f)
+    # ключи release/repo не перетираем: их редактирует пользователь
+    # (тег пинает модель к коммиту фронтенда)
+    config_path = WEB / "public" / "config.json"
+    merged = json.loads(config_path.read_text()) if config_path.exists() else {}
+    merged.update({
         "dtype": args.dtype,
         "n_layer": config.n_layer, "n_head": config.n_head,
         "head_dim": config.n_embd // config.n_head,
         "vocab_size": config.vocab_size, "n_positions": config.n_positions,
         "ckpt_step": ckpt.get("step"),
-    }, indent=2))
+    })
+    merged.setdefault("release", "latest")
+    merged.setdefault("repo", "")
+    config_path.write_text(json.dumps(merged, indent=2))
+    print("скопированы encoder.json, vocab.bpe и записан web/public/config.json")
     print("скопированы encoder.json, vocab.bpe и записан web/config.json")
 
 
