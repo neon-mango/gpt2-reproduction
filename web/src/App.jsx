@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
     AppBar, Toolbar, Typography, Container, Paper, TextField, Button,
-    Slider, Box, Chip, LinearProgress, Alert, Tooltip,
+    Slider, Box, Chip, CircularProgress, Alert, Tooltip,
 } from '@mui/material';
 import { GPT2TokenizerJS } from './bpe.js';
 import * as ort from 'onnxruntime-web';
@@ -17,6 +17,7 @@ export default function App() {
     const [modelInfo, setModelInfo] = useState('');
     const [output, setOutput] = useState('');
     const [stats, setStats] = useState('');
+    const [dl, setDl] = useState(null);    // {got,total} байт при скачивании модели
     const [error, setError] = useState('');
     const [prompt, setPrompt] = useState('The meaning of life is');
     const [isMobile] = useState(() =>
@@ -31,6 +32,7 @@ export default function App() {
     const stateRef = useRef(null);      // ort.Tensor KV-кэша
     const pastLenRef = useRef(0);
     const stopRef = useRef(false);
+    const backendRef = useRef('');          // короткое имя: 'WebGPU' | 'WASM'
     const modelBufferRef = useRef(null);   // скачанные байты модели (кэш для WASM-фолбэка)
 
     useEffect(() => { init(); }, []);
@@ -67,17 +69,37 @@ export default function App() {
     async function loadModelBuffer() {
         if (modelBufferRef.current) return modelBufferRef.current;
         const source = await resolveModelSource();
+        const total = cfgRef.current.model_size || 0;
+        const mb = b => (b / 2 ** 20).toFixed(1);
         const parts = [];
+        let got = 0, nextMark = 0;
         for (let i = 0; i < source.urls.length; i++) {
-            setStatus(`model ${source.label}: part ${i + 1}/${source.urls.length}...`);
             const resp = await fetch(source.urls[i]);
             if (!resp.ok) throw new Error(`part ${i + 1}: HTTP ${resp.status}`);
-            parts.push(new Uint8Array(await resp.arrayBuffer()));
-            const mb = parts.reduce((s, p) => s + p.length, 0) / 2 ** 20;
-            setStatus(`model ${source.label}: ${mb.toFixed(0)} MiB loaded...`);
+            const reader = resp.body.getReader();
+            const pieces = [];
+            let partLen = 0;
+            for (;;) {
+                const { done: d, value } = await reader.read();
+                if (d) break;
+                pieces.push(value);
+                got += value.length;
+                partLen += value.length;
+                if (got >= nextMark) {           // троттлинг ре-рендеров: раз в 2 МБ
+                    nextMark = got + 2 * 2 ** 20;
+                    setDl({ got, total });
+                    setStatus(`loading model ${source.label}: ` +
+                        (total ? `${mb(got)} / ${mb(total)} MB (${Math.round(got / total * 100)}%)` : `${mb(got)} MB`) +
+                        ` · part ${i + 1}/${source.urls.length}`);
+                }
+            }
+            const merged = new Uint8Array(partLen);
+            let off = 0;
+            for (const p of pieces) { merged.set(p, off); off += p.length; }
+            parts.push(merged);
         }
-        const total = parts.reduce((s, p) => s + p.length, 0);
-        const buf = new Uint8Array(total);
+        setDl({ got, total });
+        const buf = new Uint8Array(got);
         let off = 0;
         for (const p of parts) { buf.set(p, off); off += p.length; }
         if (cfgRef.current.model_sha256 && await sha256hex(buf) !== cfgRef.current.model_sha256)
@@ -109,6 +131,7 @@ export default function App() {
                 backendName = 'WASM';
             }
             sessionRef.current = session;
+            backendRef.current = backendName;
             // самопроверка бэкенда: префилл одной строки, argmax должен попасть
             // в эталонную top-5 (посчитано torch-ом на best.pt, fp32)
             const golden = new Set([262, 257, 635, 5140, 287]);
@@ -191,7 +214,7 @@ export default function App() {
                 generated.push(next);
                 setOutput(tok.decode(generated));
                 const tps = pastLenRef.current / ((performance.now() - t0) / 1000);
-                setStats(`${i + 1} tokens · ${tps.toFixed(0)} tok/s`);
+                setStats(`${i + 1} tokens · ${tps.toFixed(0)} tok/s · ${backendRef.current}`);
                 await new Promise(r => setTimeout(r, 0));    // кадр на отрисовку
                 logits = await step([next]);
             }
@@ -215,10 +238,26 @@ export default function App() {
             </AppBar>
             <Container maxWidth="md" sx={{ py: 3 }}>
                 {!ready && error === '' && (
-                    <Box>
-                        <LinearProgress />
-                        <Typography color="text.secondary" sx={{ mt: 1 }}>{status}</Typography>
-                    </Box>
+                    <Paper sx={{ p: 3, mb: 2, display: 'flex', alignItems: 'center', gap: 3 }}>
+                        <Box sx={{ position: 'relative', display: 'inline-flex', flexShrink: 0 }}>
+                            <CircularProgress
+                                variant={dl && dl.total ? 'determinate' : 'indeterminate'}
+                                value={dl && dl.total ? Math.min(100, dl.got / dl.total * 100) : undefined}
+                                size={72} thickness={4} />
+                            <Box sx={{ position: 'absolute', inset: 0, display: 'flex',
+                                       alignItems: 'center', justifyContent: 'center' }}>
+                                <Typography variant="caption" sx={{ fontWeight: 600 }}>
+                                    {dl && dl.total ? `${Math.min(100, Math.round(dl.got / dl.total * 100))}%` : ''}
+                                </Typography>
+                            </Box>
+                        </Box>
+                        <Box sx={{ minWidth: 0 }}>
+                            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Loading model</Typography>
+                            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                                {status}
+                            </Typography>
+                        </Box>
+                    </Paper>
                 )}
                 {error !== '' && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
