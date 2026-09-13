@@ -19,7 +19,9 @@ export default function App() {
     const [stats, setStats] = useState('');
     const [error, setError] = useState('');
     const [prompt, setPrompt] = useState('The meaning of life is');
-    const [maxTokens, setMaxTokens] = useState(150);
+    const [isMobile] = useState(() =>
+        matchMedia('(pointer: coarse)').matches || innerWidth < 640);
+    const [maxTokens, setMaxTokens] = useState(isMobile ? 64 : 150);
     const [temperature, setTemperature] = useState(0.8);
     const [topK, setTopK] = useState(50);
 
@@ -101,7 +103,7 @@ export default function App() {
                 console.warn('WebGPU unavailable, falling back to WASM:', e);
                 session = await ort.InferenceSession.create(buf.buffer,
                     { executionProviders: ['wasm'], graphOptimizationLevel: 'all' });
-                setBackend('WASM (slower)');
+                setBackend(isMobile ? 'WASM (phone CPU: ~1-3 tok/s)' : 'WASM (slower)');
             }
             sessionRef.current = session;
             setModelInfo(`step ${cfgRef.current.ckpt_step}, ${cfgRef.current.dtype}`);
@@ -223,7 +225,7 @@ export default function App() {
                                     valueLabelDisplay="auto"
                                     onChange={(_, v) => setTopK(v)} disabled={!ready} />
                         </Box>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, ml: 'auto' }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, ml: 'auto', flexWrap: 'wrap' }}>
                             <Tooltip title="sampling stops on the <|endoftext|> token">
                                 <Button variant="contained" onClick={generate}
                                         disabled={!ready} sx={{ minWidth: 140 }}>
