@@ -31,6 +31,7 @@ export default function App() {
     const stateRef = useRef(null);      // ort.Tensor KV-кэша
     const pastLenRef = useRef(0);
     const stopRef = useRef(false);
+    const modelBufferRef = useRef(null);   // скачанные байты модели (кэш для WASM-фолбэка)
 
     useEffect(() => { init(); }, []);
 
@@ -64,7 +65,7 @@ export default function App() {
     }
 
     async function loadModelBuffer() {
-        if (modelBuffer) return modelBuffer;
+        if (modelBufferRef.current) return modelBufferRef.current;
         const source = await resolveModelSource();
         const parts = [];
         for (let i = 0; i < source.urls.length; i++) {
@@ -81,8 +82,8 @@ export default function App() {
         for (const p of parts) { buf.set(p, off); off += p.length; }
         if (cfgRef.current.model_sha256 && await sha256hex(buf) !== cfgRef.current.model_sha256)
             throw new Error('model sha256 mismatch');
-        modelBuffer = buf;
-        return modelBuffer;
+        modelBufferRef.current = buf;
+        return modelBufferRef.current;
     }
 
     async function init() {
