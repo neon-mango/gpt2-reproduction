@@ -127,7 +127,7 @@ export default function App() {
                 console.warn('WebGPU unavailable, falling back to WASM:', e);
                 session = await ort.InferenceSession.create(buf.buffer,
                     { executionProviders: ['wasm'], graphOptimizationLevel: 'all' });
-                setBackend(isMobile ? 'WASM (phone CPU: ~1-3 tok/s)' : 'WASM (slower)');
+                setBackend('WASM (slower than WebGPU)');
                 backendName = 'WASM';
             }
             sessionRef.current = session;
@@ -305,13 +305,6 @@ export default function App() {
                 {output !== '' && (
                     <Paper sx={{ p: 2, mt: 2 }}>
                         <Typography sx={{ whiteSpace: 'pre-wrap' }}>{output}</Typography>
-                        {backendRef.current === 'WASM' && (
-                            <Typography variant="caption" color="text.secondary"
-                                       sx={{ display: 'block', mt: 1, borderTop: '1px solid', borderColor: 'divider', pt: 1 }}>
-                                Running on the WASM backend (plain CPU) — low tok/s is expected here.
-                                If your device supports WebGPU, it would be several times faster.
-                            </Typography>
-                        )}
                     </Paper>
                 )}
                 {stats !== '' && (
