@@ -6,8 +6,6 @@
   "vocab_size": 50257,
   "n_positions": 1024,
   "ckpt_step": 17250,
-  "release": "latest",
-  "repo": "",
   "model_sha256": "3abf373be8f67fa24ed2f0a2a1ae51e1d77eb3bd0ddfcb9b3ca786421ab997b0",
   "model_size": 326206698,
   "model_chunks": [

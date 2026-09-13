@@ -88,7 +88,7 @@ export default function App() {
             const cfgResp = await fetch('config.json');
             if (!cfgResp.ok) throw new Error(`config.json: HTTP ${cfgResp.status}`);
             cfgRef.current = await cfgResp.json();
-            tokenizerRef.current = await GPT2TokenizerJS.load('');
+            tokenizerRef.current = await GPT2TokenizerJS.load('.');
             setStatus(`loading model (${cfgRef.current.dtype}, step ${cfgRef.current.ckpt_step})...`);
             ort.env.wasm.wasmPaths = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ORT_VERSION}/dist/`;
             const buf = await loadModelBuffer();
