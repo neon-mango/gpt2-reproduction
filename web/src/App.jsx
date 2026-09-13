@@ -272,7 +272,7 @@ export default function App() {
                     <Box sx={{ display: 'flex', gap: 3, mt: 2, flexWrap: 'wrap' }}>
                         {[
                             { label: 'new tokens', value: maxTokens, set: setMaxTokens, min: 16, max: 512, step: 16, fmt: v => String(v) },
-                            { label: 'temperature', value: temperature, set: setTemperature, min: 0.1, max: 2, step: 0.05, fmt: v => v.toFixed(2) },
+                            { label: 'temperature', value: temperature, set: setTemperature, min: 0.1, max: 1, step: 0.05, fmt: v => v.toFixed(2) },
                             { label: 'top-k', value: topK, set: setTopK, min: 1, max: 200, step: 1, fmt: v => String(v) },
                         ].map(c => (
                             <Box key={c.label} sx={{ flex: '1 1 180px', minWidth: 160 }}>
