@@ -6,7 +6,6 @@ checkpoints/
 *.safetensors
 *.onnx
 *.onnx.data
-web/public/model/
 node_modules/
 web/dist/
 *.log
