@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
     AppBar, Toolbar, Typography, Container, Paper, TextField, Button,
     Slider, Box, Chip, LinearProgress, Alert, Tooltip,
