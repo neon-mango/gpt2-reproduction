@@ -24,7 +24,7 @@ export default function App() {
         matchMedia('(pointer: coarse)').matches || innerWidth < 640);
     const [maxTokens, setMaxTokens] = useState(isMobile ? 64 : 150);
     const [temperature, setTemperature] = useState(0.95);
-    const [topK, setTopK] = useState(50);
+    const [topK, setTopK] = useState(5);
 
     const sessionRef = useRef(null);
     const tokenizerRef = useRef(null);
@@ -273,7 +273,7 @@ export default function App() {
                         {[
                             { label: 'new tokens', value: maxTokens, set: setMaxTokens, min: 16, max: 512, step: 16, fmt: v => String(v) },
                             { label: 'temperature', value: temperature, set: setTemperature, min: 0.1, max: 1, step: 0.05, fmt: v => v.toFixed(2) },
-                            { label: 'top-k', value: topK, set: setTopK, min: 1, max: 200, step: 1, fmt: v => String(v) },
+                            { label: 'top-k', value: topK, set: setTopK, min: 1, max: 20, step: 1, fmt: v => String(v) },
                         ].map(c => (
                             <Box key={c.label} sx={{ flex: '1 1 180px', minWidth: 160 }}>
                                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
