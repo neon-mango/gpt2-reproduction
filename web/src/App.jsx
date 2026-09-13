@@ -210,19 +210,20 @@ export default function App() {
                         <Box sx={{ minWidth: 150 }}>
                             <Typography gutterBottom color="text.secondary">new tokens</Typography>
                             <Slider value={maxTokens} min={16} max={512} step={16}
-                                    valueLabelDisplay="auto"
+                                    valueLabelDisplay="on"
                                     onChange={(_, v) => setMaxTokens(v)} disabled={!ready} />
                         </Box>
                         <Box sx={{ minWidth: 150 }}>
                             <Typography gutterBottom color="text.secondary">temperature</Typography>
                             <Slider value={temperature} min={0.1} max={2} step={0.05}
-                                    valueLabelDisplay="auto"
+                                    valueLabelDisplay="on"
+                                    valueLabelFormat={v => v.toFixed(2)}
                                     onChange={(_, v) => setTemperature(v)} disabled={!ready} />
                         </Box>
                         <Box sx={{ minWidth: 150 }}>
                             <Typography gutterBottom color="text.secondary">top-k</Typography>
                             <Slider value={topK} min={1} max={200} step={1}
-                                    valueLabelDisplay="auto"
+                                    valueLabelDisplay="on"
                                     onChange={(_, v) => setTopK(v)} disabled={!ready} />
                         </Box>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, ml: 'auto', flexWrap: 'wrap' }}>
