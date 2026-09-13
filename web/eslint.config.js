@@ -11,6 +11,14 @@ export default [
             parserOptions: { ecmaFeatures: { jsx: true } },
             globals: { ...globals.browser },
         },
+    },
+    {
+        files: ['src/**/*.test.{js,mjs}'],
+        languageOptions: {
+            ecmaVersion: 2024,
+            sourceType: 'module',
+            globals: { ...globals.node },
+        },
         rules: {
             'no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
         },

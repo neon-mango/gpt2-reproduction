@@ -95,25 +95,48 @@ export default function App() {
             setStatus(`loading model (${cfgRef.current.dtype}, step ${cfgRef.current.ckpt_step})...`);
             ort.env.wasm.wasmPaths = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ORT_VERSION}/dist/`;
             const buf = await loadModelBuffer();
-            let session;
+            let session, backendName;
             try {
                 session = await ort.InferenceSession.create(buf.buffer,
                     { executionProviders: ['webgpu'], graphOptimizationLevel: 'all' });
                 setBackend('WebGPU');
+                backendName = 'WebGPU';
             } catch (e) {
                 console.warn('WebGPU unavailable, falling back to WASM:', e);
                 session = await ort.InferenceSession.create(buf.buffer,
                     { executionProviders: ['wasm'], graphOptimizationLevel: 'all' });
                 setBackend(isMobile ? 'WASM (phone CPU: ~1-3 tok/s)' : 'WASM (slower)');
+                backendName = 'WASM';
             }
             sessionRef.current = session;
-            setModelInfo(`step ${cfgRef.current.ckpt_step}, ${cfgRef.current.dtype}`);
+            // самопроверка бэкенда: префилл одной строки, argmax должен попасть
+            // в эталонную top-5 (посчитано torch-ом на best.pt, fp32)
+            const golden = new Set([262, 257, 635, 5140, 287]);
+            const probe = [464, 3139, 286, 4881, 318];   // "The capital of France is"
+            stateRef.current = zeroState();
+            pastLenRef.current = 0;
+            const probeLogits = await step(probe);
+            let best = -1, bestIdx = -1;
+            for (let i = 0; i < probeLogits.length; i++) {
+                if (probeLogits[i] > best) { best = probeLogits[i]; bestIdx = i; }
+            }
+            if (!golden.has(bestIdx)) {
+                throw new Error(`self-test failed: ${backendName} predicts token ${bestIdx}, ` +
+                    `expected one of [${[...golden].join(', ')}] — the graph/backend is broken`);
+            }
+            setModelInfo(`step ${cfgRef.current.ckpt_step}, ${cfgRef.current.dtype} · self-test ok`);
             setStatus('ready');
             setReady(true);
         } catch (e) {
             console.error(e);
             setStatus('');
-            setError(`failed to load model: ${e.message}`);
+            let msg = e.message;
+            if (/SIMD|JIT|initWasm/i.test(msg)) {
+                msg += ' — WebAssembly seems to be disabled in this browser ' +
+                    '(JIT off?). The model needs WebGPU or WASM; please allow ' +
+                    'wasm/JIT for this site or try another browser.';
+            }
+            setError(`failed to load model: ${msg}`);
         }
     }
 
@@ -208,25 +231,23 @@ export default function App() {
                         disabled={!ready}
                     />
                     <Box sx={{ display: 'flex', gap: 3, mt: 2, flexWrap: 'wrap' }}>
-                        <Box sx={{ minWidth: 150 }}>
-                            <Typography gutterBottom color="text.secondary">new tokens</Typography>
-                            <Slider value={maxTokens} min={16} max={512} step={16}
-                                    valueLabelDisplay="on"
-                                    onChange={(_, v) => setMaxTokens(v)} disabled={!ready} />
-                        </Box>
-                        <Box sx={{ minWidth: 150 }}>
-                            <Typography gutterBottom color="text.secondary">temperature</Typography>
-                            <Slider value={temperature} min={0.1} max={2} step={0.05}
-                                    valueLabelDisplay="on"
-                                    valueLabelFormat={v => v.toFixed(2)}
-                                    onChange={(_, v) => setTemperature(v)} disabled={!ready} />
-                        </Box>
-                        <Box sx={{ minWidth: 150 }}>
-                            <Typography gutterBottom color="text.secondary">top-k</Typography>
-                            <Slider value={topK} min={1} max={200} step={1}
-                                    valueLabelDisplay="on"
-                                    onChange={(_, v) => setTopK(v)} disabled={!ready} />
-                        </Box>
+                        {[
+                            { label: 'new tokens', value: maxTokens, set: setMaxTokens, min: 16, max: 512, step: 16, fmt: v => String(v) },
+                            { label: 'temperature', value: temperature, set: setTemperature, min: 0.1, max: 2, step: 0.05, fmt: v => v.toFixed(2) },
+                            { label: 'top-k', value: topK, set: setTopK, min: 1, max: 200, step: 1, fmt: v => String(v) },
+                        ].map(c => (
+                            <Box key={c.label} sx={{ flex: '1 1 180px', minWidth: 160 }}>
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                                    <Typography variant="body2" color="text.secondary">{c.label}</Typography>
+                                    <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 600 }}>
+                                        {c.fmt(c.value)}
+                                    </Typography>
+                                </Box>
+                                <Slider value={c.value} min={c.min} max={c.max} step={c.step}
+                                        valueLabelDisplay="auto" aria-label={c.label}
+                                        onChange={(_, v) => c.set(v)} disabled={!ready} />
+                            </Box>
+                        ))}
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, ml: 'auto', flexWrap: 'wrap' }}>
                             <Tooltip title="sampling stops on the <|endoftext|> token">
                                 <Button variant="contained" onClick={generate}
