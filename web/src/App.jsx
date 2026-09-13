@@ -23,7 +23,7 @@ export default function App() {
     const [isMobile] = useState(() =>
         matchMedia('(pointer: coarse)').matches || innerWidth < 640);
     const [maxTokens, setMaxTokens] = useState(isMobile ? 64 : 150);
-    const [temperature, setTemperature] = useState(0.8);
+    const [temperature, setTemperature] = useState(0.95);
     const [topK, setTopK] = useState(50);
 
     const sessionRef = useRef(null);
