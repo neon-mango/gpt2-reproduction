@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-    AppBar, Toolbar, Typography, Container, Paper, TextField, Button,
-    Slider, Box, Chip, CircularProgress, Alert, Tooltip,
-} from '@mui/material';
+    DrawablyButton, DrawablyCard, DrawablyTextarea, DrawablyBadge,
+    DrawablyAlert, DrawablyUnderline,
+} from 'drawably/react';
+import 'drawably/style.css';
+import './sketchy.css';
 import { GPT2TokenizerJS } from './bpe.js';
 import * as ort from 'onnxruntime-web';
 
@@ -227,90 +229,77 @@ export default function App() {
 
     return (
         <>
-            <AppBar position="static">
-                <Toolbar>
-                    <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-                        GPT-2 124M reproduction
-                    </Typography>
-                    {backend && <Chip label={backend} color="primary" size="small" sx={{ mr: 1 }} />}
-                    {modelInfo && <Chip label={modelInfo} variant="outlined" size="small" />}
-                </Toolbar>
-            </AppBar>
-            <Container maxWidth="md" sx={{ py: 3 }}>
-                {!ready && error === '' && (
-                    <Paper sx={{ p: 3, mb: 2, display: 'flex', alignItems: 'center', gap: 3 }}>
-                        <Box sx={{ position: 'relative', display: 'inline-flex', flexShrink: 0 }}>
-                            <CircularProgress
-                                variant={dl && dl.total ? 'determinate' : 'indeterminate'}
-                                value={dl && dl.total ? Math.min(100, dl.got / dl.total * 100) : undefined}
-                                size={72} thickness={4} />
-                            <Box sx={{ position: 'absolute', inset: 0, display: 'flex',
-                                       alignItems: 'center', justifyContent: 'center' }}>
-                                <Typography variant="caption" sx={{ fontWeight: 600 }}>
-                                    {dl && dl.total ? `${Math.min(100, Math.round(dl.got / dl.total * 100))}%` : ''}
-                                </Typography>
-                            </Box>
-                        </Box>
-                        <Box sx={{ minWidth: 0 }}>
-                            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Loading model</Typography>
-                            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                                {status}
-                            </Typography>
-                        </Box>
-                    </Paper>
-                )}
-                {error !== '' && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+            <header className="site-head">
+                <h1><DrawablyUnderline>GPT-2 124M reproduction</DrawablyUnderline></h1>
+                <div className="head-badges">
+                    {backend && <DrawablyBadge variant="scribble">{backend}</DrawablyBadge>}
+                    {modelInfo && <DrawablyBadge>{modelInfo}</DrawablyBadge>}
+                </div>
+            </header>
 
-                <Paper sx={{ p: 2 }}>
-                    <TextField
-                        label="Prompt"
-                        multiline rows={3} fullWidth
-                        value={prompt}
-                        onChange={e => setPrompt(e.target.value)}
-                        disabled={!ready}
-                    />
-                    <Box sx={{ display: 'flex', gap: 3, mt: 2, flexWrap: 'wrap' }}>
+            <main className="page">
+                {!ready && error === '' && (
+                    <DrawablyCard className="card">
+                        <div className="load-head">Loading model</div>
+                        <div className={`progress${dl && dl.total ? '' : ' progress-busy'}`}>
+                            <div className="progress-fill" style={dl && dl.total
+                                ? { width: `${Math.min(100, dl.got / dl.total * 100)}%` }
+                                : undefined} />
+                        </div>
+                        <div className="muted status-line">
+                            {status}
+                            {dl && dl.total ? ` · ${Math.min(100, Math.round(dl.got / dl.total * 100))}%` : ''}
+                        </div>
+                    </DrawablyCard>
+                )}
+                {error !== '' && (
+                    <DrawablyAlert className="card">
+                        <span data-tag>error</span> {error}
+                    </DrawablyAlert>
+                )}
+
+                <DrawablyCard className="card">
+                    <label className="field-label" htmlFor="prompt">Prompt</label>
+                    <DrawablyTextarea id="prompt" className="prompt" rows={4}
+                                      value={prompt}
+                                      onChange={e => setPrompt(e.target.value)}
+                                      disabled={!ready} />
+                    <div className="controls">
                         {[
                             { label: 'new tokens', value: maxTokens, set: setMaxTokens, min: 16, max: 512, step: 16, fmt: v => String(v) },
                             { label: 'temperature', value: temperature, set: setTemperature, min: 0.1, max: 1, step: 0.05, fmt: v => v.toFixed(2) },
                             { label: 'top-k', value: topK, set: setTopK, min: 1, max: 20, step: 1, fmt: v => String(v) },
                         ].map(c => (
-                            <Box key={c.label} sx={{ flex: '1 1 180px', minWidth: 160 }}>
-                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                                    <Typography variant="body2" color="text.secondary">{c.label}</Typography>
-                                    <Typography variant="body2" sx={{ fontFamily: 'monospace', fontWeight: 600 }}>
-                                        {c.fmt(c.value)}
-                                    </Typography>
-                                </Box>
-                                <Slider value={c.value} min={c.min} max={c.max} step={c.step}
-                                        valueLabelDisplay="auto" aria-label={c.label}
-                                        onChange={(_, v) => c.set(v)} disabled={!ready} />
-                            </Box>
+                            <div key={c.label} className="slider">
+                                <div className="slider-head">
+                                    <span className="muted">{c.label}</span>
+                                    <span className="val">{c.fmt(c.value)}</span>
+                                </div>
+                                <input type="range" aria-label={c.label}
+                                       value={c.value} min={c.min} max={c.max} step={c.step}
+                                       onChange={e => c.set(Number(e.target.value))}
+                                       disabled={!ready} />
+                            </div>
                         ))}
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, ml: 'auto', flexWrap: 'wrap' }}>
-                            <Tooltip title="sampling stops on the <|endoftext|> token">
-                                <Button variant="contained" onClick={generate}
-                                        disabled={!ready} sx={{ minWidth: 140 }}>
-                                    Generate
-                                </Button>
-                            </Tooltip>
-                            <Button variant="outlined" color="error"
-                                    onClick={() => { stopRef.current = true; }}>
+                        <div className="actions">
+                            <DrawablyButton variant="solid" onClick={generate} disabled={!ready}>
+                                Generate
+                            </DrawablyButton>
+                            <DrawablyButton tone="danger"
+                                            onClick={() => { stopRef.current = true; }}>
                                 Stop
-                            </Button>
-                        </Box>
-                    </Box>
-                </Paper>
+                            </DrawablyButton>
+                        </div>
+                    </div>
+                </DrawablyCard>
 
                 {output !== '' && (
-                    <Paper sx={{ p: 2, mt: 2 }}>
-                        <Typography sx={{ whiteSpace: 'pre-wrap' }}>{output}</Typography>
-                    </Paper>
+                    <DrawablyCard className="card">
+                        <div className="pre">{output}</div>
+                    </DrawablyCard>
                 )}
-                {stats !== '' && (
-                    <Typography color="text.secondary" sx={{ mt: 1 }}>{stats}</Typography>
-                )}
-            </Container>
+                {stats !== '' && <div className="muted stats-line">{stats}</div>}
+            </main>
         </>
     );
 }

@@ -40,7 +40,7 @@
 gpt2rep/                 # ядро: tokenizer.py (byte-level BPE), model.py (GPT-2)
 scripts/                 # скачивание данных/токенизатора, токенизация,
                          # верификация, ONNX-экспорт, нарезка модели
-web/                     # фронтенд: React + Material UI (Vite), инференс ORT-web
+web/                     # фронтенд: React + drawably (Vite), инференс ORT-web
 train.py / generate.py   # обучение и генерация (CLI)
 docs/                    # документация и разборы
 ```

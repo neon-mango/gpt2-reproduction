@@ -11,9 +11,7 @@
     "test": "node src/bpe.test.mjs"
   },
   "dependencies": {
-    "@emotion/react": "^11.14.0",
-    "@emotion/styled": "^11.14.0",
-    "@mui/material": "^6.4.0",
+    "drawably": "^0.4.2",
     "onnxruntime-web": "1.22.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"

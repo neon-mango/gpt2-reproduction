@@ -121,7 +121,7 @@ URL любого статического хостинга с CORS), `model_sha2
 gpt2rep/                 # ядро: tokenizer.py, model.py (архитектура + ONNX-обёртка)
 scripts/                 # download_tokenizer, download_data, prepare_tokens,
                          # verify_parity, eval_model, export_onnx, split_model
-web/                     # React + MUI фронтенд, JS-токенизатор, деплой-воркфлоу
+web/                     # React + drawably фронтенд, JS-токенизатор, деплой-воркфлоу
 train.py                 # обучение
 generate.py              # генерация (CLI)
 ```
