@@ -66,6 +66,10 @@ body {
 
 .field-label { display: block; margin-bottom: 6px; color: #6b6b6b; font-size: 14px; }
 
+.drawably-textarea {
+    display: block;      /* в библиотеке inline-block — сжимается по контенту */
+    width: 100%;
+}
 .drawably-textarea textarea {
     width: 100%;
     font: inherit;
@@ -77,13 +81,13 @@ body {
 
 .controls {
     display: flex;
-    gap: 24px;
+    gap: 16px;
     flex-wrap: wrap;
     align-items: flex-end;
     margin-top: 16px;
 }
 
-.slider { flex: 1 1 170px; min-width: 160px; }
+.slider { flex: 1 1 150px; min-width: 150px; }
 .slider-head {
     display: flex;
     justify-content: space-between;
@@ -128,6 +132,6 @@ input[type="range"]::-moz-range-thumb {
     border: 2px solid var(--ink);
 }
 
-.actions { display: flex; gap: 12px; align-items: center; }
+.actions { display: flex; gap: 12px; align-items: center; margin-left: auto; }
 
 .pre { white-space: pre-wrap; font-size: 15px; line-height: 1.55; }

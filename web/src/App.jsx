@@ -37,7 +37,12 @@ export default function App() {
     const backendRef = useRef('');          // короткое имя: 'WebGPU' | 'WASM'
     const modelBufferRef = useRef(null);   // скачанные байты модели (кэш для WASM-фолбэка)
 
-    useEffect(() => { init(); }, []);
+    const initStartedRef = useRef(false);   // React StrictMode монтирует дважды
+    useEffect(() => {
+        if (initStartedRef.current) return;  // вторая ORT-сессия = 'Session mismatch'
+        initStartedRef.current = true;
+        init();
+    }, []);
 
     function zeroState() {
         const dims = [cfgRef.current.n_layer, 2, 1, cfgRef.current.n_head, 0, cfgRef.current.head_dim];
@@ -232,7 +237,7 @@ export default function App() {
             <header className="site-head">
                 <h1><DrawablyUnderline>GPT-2 124M reproduction</DrawablyUnderline></h1>
                 <div className="head-badges">
-                    {backend && <DrawablyBadge variant="scribble">{backend}</DrawablyBadge>}
+                    {backend && <DrawablyBadge>{backend}</DrawablyBadge>}
                     {modelInfo && <DrawablyBadge>{modelInfo}</DrawablyBadge>}
                 </div>
             </header>
