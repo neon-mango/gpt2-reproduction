@@ -47,4 +47,5 @@ docs/                    # документация и разборы
 
 ## Благодарности
 
-В разработке проетка помогала модель GLM-5.3-Flash в режиме max от [Z.ai](https://github.com/neon-mango/gpt2-reproduction).
+- В разработке проекта помогала модель GLM-5.3-Flash в режиме max от [Z.ai](https://github.com/neon-mango/gpt2-reproduction).
+- UI фронтенда построен на [drawably](https://github.com/Danilaa1/drawably) - нарисованные от руки виджеты, разработчик - [Danilaa1](https://github.com/Danilaa1) (MIT).
